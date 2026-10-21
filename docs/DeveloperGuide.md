@@ -231,6 +231,26 @@ The command replaces a scheduled lesson with the immutable copy returned by `Les
     * Pros: Simpler.
     * Cons: A tutor could be left with half a series and have to find and delete it.
 
+### Follow-up tasks
+
+A follow-up task (user story 31) is a to-do attached to exactly one of a student, a lesson or a homework item. The `task` commands (`task add`, `task list`, `task edit`, `task done`, `task delete`) are routed through `TaskCommandParser`, which takes a `Clock` so that `today`, `tmr` and the past-date check can be tested with a fixed date.
+
+**Links are permanent ids.** `Task` stores its own `UUID`, the `UUID` of its student, and optionally the `UUID` of a lesson or of a homework item (never both). These ids do not change when a student is renamed, a lesson is moved or cancelled, or homework is edited, so the task never has to be rewritten when its target changes. In particular, a cancelled lesson and a new lesson booked in the same slot have different ids, so the new lesson does not inherit the old lesson's task. `Task.isAbout(Person)`, `isAbout(Lesson)` and `isAbout(Homework)` compare ids only.
+
+**Cascades live in `AddressBook`.** `removePerson` deletes the tasks about the student, `removeLesson` those about the lesson, and `removeHomework` those about the homework item. Because every deletion path goes through these three methods, a task can never be left pointing at a record that no longer exists. `addTask` and `setTasks` check that the student exists, and that any lesson or homework item exists and belongs to that student, and `setTask` refuses to change the id or the links. An archived student's tasks are kept.
+
+**Storage.** `JsonAdaptedTask` saves the ids as strings and rejects a missing or malformed id, a task with both a lesson and a homework item, and a bad due date. `JsonSerializableAddressBook` loads persons, lessons and homework first, then the tasks, and rejects duplicate task ids and tasks whose student, lesson or homework item is not in the data. The tasks list is optional, so a file saved before tasks existed still loads. `StorageSchema.CURRENT_VERSION` is 16 because older versions cannot read a file with tasks.
+
+**Due dates.** The parser reads `YYYY-MM-DD`, `today` or `tmr`. `TaskAddCommand` and `TaskEditCommand` take `today` and reject a due date before it with `Due dates must be today or later.`; keeping an existing late date while rewording a task is allowed, because only a new date is checked. `task edit due/-` removes the date.
+
+**Indices.** `task list` stores the shown tasks with `Model.setShownTasks`. The other commands take their number from that snapshot and look the task up again by id, in the same way as `hw`, so numbers stay fixed until the next `task list` and a deleted task gives `That task was deleted. Run 'task list' to refresh.`
+
+**Deleting a student.** `DeleteCommand` counts the tasks about the student, including the tasks about their lessons and homework, and asks for `confirm` when there are any. The preview and the result add the task count without changing the existing lesson and homework wording.
+
+**Not yet done.** `pay/INDEX` is accepted by the parser so that the command already has its final format, but it answers `Invalid payment index. Run 'pay list' first.` until payment records exist. Undo of task commands belongs to the undo feature.
+
+`TaskTest`, `AddressBookTest`, `JsonAdaptedTaskTest`, `JsonSerializableAddressBookTest`, the `Task*CommandTest` classes, `TaskCommandParserTest`, `DeleteCommandTest` and `TasksIntegrationTest` cover the rules above.
+
 ### \[Proposed\] Undo/redo feature
 
 #### Proposed Implementation
@@ -891,6 +911,34 @@ testers are expected to do more *exploratory* testing.
    1. Other incorrect commands to try: completion of a future or cancelled lesson, `lesson done 0`, `lesson done INDEX n/`, or `lesson done INDEX n/First n/Second`<br>
       Expected: Rejected without changing the lesson or notes.
 
+### Follow-up tasks
+
+1. Adding and listing tasks
+
+   1. Prerequisites: At least one student, and one lesson shown by `agenda`. Run `hw add st/1 desc/Chapter 3 due/tmr` and `hw list`.
+
+   1. Test case: `task add st/1 desc/Call parent due/tmr`, then `task add lesson/1 desc/Prepare mock paper`, then `task add hw/1 desc/Check corrections`, then `task list`<br>
+      Expected: Three open tasks. Each row names the student and what it is about (the student, the lesson, the homework).
+
+   1. Test case: `task add st/1 desc/Call parent due/2020-01-01`<br>
+      Expected: `Due dates must be today or later.` Nothing is added.
+
+   1. Other incorrect commands to try: `task add desc/x`, `task add st/1 lesson/1 desc/x`, `task add st/1 desc/`, `task edit 1 desc/x due/2020-01-01`<br>
+      Expected: Rejected without changing any task.
+
+1. Tasks follow their targets
+
+   1. Test case: `edit 1 n/New Name`, `lesson move 1 t/18:00`, `lesson cancel 1`, then `task list`<br>
+      Expected: The tasks are still there, showing the new name, the moved time and the cancelled status.
+
+   1. Test case: `delete 1`<br>
+      Expected: The command lists how many tasks go with the student and asks for `delete 1 confirm`. After confirming, `task list all/` no longer shows them.
+
+   1. Test case: `hw delete INDEX confirm` for a homework item that has a task<br>
+      Expected: The task about that homework item is gone, the other tasks remain.
+
+1. Saving: add a task, close the app, reopen it and run `task list`. Expected: the task is still there.
+
 ### Saving data
 
 1. Dealing with missing/corrupted data files
@@ -979,14 +1027,14 @@ it must never be treated as the current database. Indexed commands take the show
 resolve it against `getAddressBook().getHomeworkList()`. A deleted ID produces an error without
 renumbering remaining rows. Changes, archive, student rename, reset, and failed writes leave the
 selection untouched. A restored snapshot with the same identity can be selected again after undo.
-A future linked task must resolve homework indices by this same shown-ID rule, then persist UUIDs.
+`task add hw/INDEX` resolves its homework through `HomeworkCommandSupport.target`, the same shown-ID rule, and stores the homework's UUID.
 
 `CommandResult.getDisplayedHomework()` exposes optional immutable typed rows for the numbered
 list. `withFeedback` retains them across unsaved warnings. Task 7 can render those rows directly;
 non-indexed overview/dashboard summaries deliberately do not replace the selection. No unused UI
 component or feedback-string parsing is required. Finance can extend summaries independently.
-Future undo snapshots must copy the complete `AddressBook`, including homework; future task-parent
-guards must wrap homework/student deletion before removing any record to avoid orphaned tasks.
+Future undo snapshots must copy the complete `AddressBook`, including homework and tasks. Orphaned tasks
+are prevented inside `AddressBook` itself (see [Follow-up tasks](#follow-up-tasks)).
 
 Focused regression tests cover historical feedback, schema progression and refusal, duplicate/orphan
 rejection, due-date boundaries, lifecycle correction, guarded deletion, filtered numbering, archive,

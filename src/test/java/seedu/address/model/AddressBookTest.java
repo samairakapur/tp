@@ -15,6 +15,7 @@ import static seedu.address.testutil.TypicalPersons.ALICE;
 import static seedu.address.testutil.TypicalPersons.BENSON;
 import static seedu.address.testutil.TypicalPersons.getTypicalAddressBook;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 
@@ -22,13 +23,16 @@ import org.junit.jupiter.api.Test;
 
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import seedu.address.model.homework.Homework;
 import seedu.address.model.lesson.Lesson;
 import seedu.address.model.lesson.exceptions.DuplicateLessonException;
 import seedu.address.model.lesson.exceptions.LessonNotFoundException;
 import seedu.address.model.person.Person;
 import seedu.address.model.person.exceptions.DuplicatePersonException;
+import seedu.address.model.task.Task;
 import seedu.address.testutil.LessonBuilder;
 import seedu.address.testutil.PersonBuilder;
+import seedu.address.testutil.TaskBuilder;
 
 public class AddressBookTest {
 
@@ -232,7 +236,8 @@ public class AddressBookTest {
     @Test
     public void toStringMethod() {
         String expected = AddressBook.class.getCanonicalName() + "{persons=" + addressBook.getPersonList()
-                + ", lessons=" + addressBook.getLessonList() + "}";
+                + ", lessons=" + addressBook.getLessonList()
+                + ", tasks=" + addressBook.getTaskList() + "}";
         assertEquals(expected, addressBook.toString());
     }
 
@@ -261,6 +266,176 @@ public class AddressBookTest {
         public ObservableList<Lesson> getLessonList() {
             return lessons;
         }
+
+        @Override
+        public ObservableList<Task> getTaskList() {
+            return FXCollections.observableArrayList();
+        }
     }
 
+    @Test
+    public void removePerson_personWithTasks_removesTasksAboutPersonOnly() {
+        addressBook.addPerson(ALICE);
+        addressBook.addPerson(BENSON);
+        addressBook.addLesson(ALICE_MATH);
+        Homework homework = Homework.assign(ALICE.getId(), "Chapter 3", LocalDate.of(2026, 12, 1));
+        addressBook.addHomework(homework);
+        Task aboutStudent = new TaskBuilder().withId(TaskBuilder.idOf(1)).withStudent(ALICE).build();
+        Task aboutLesson = new TaskBuilder().withId(TaskBuilder.idOf(2)).withLesson(ALICE, ALICE_MATH).build();
+        Task aboutHomework = new TaskBuilder().withId(TaskBuilder.idOf(3)).withHomework(homework).build();
+        Task aboutOther = new TaskBuilder().withId(TaskBuilder.idOf(4)).withStudent(BENSON).build();
+        addressBook.addTask(aboutStudent);
+        addressBook.addTask(aboutLesson);
+        addressBook.addTask(aboutHomework);
+        addressBook.addTask(aboutOther);
+
+        addressBook.removePerson(ALICE);
+
+        assertEquals(List.of(aboutOther), addressBook.getTaskList());
+    }
+
+    @Test
+    public void setPerson_nameChanged_tasksStayLinkedWithoutRewriting() {
+        addressBook.addPerson(ALICE);
+        addressBook.addLesson(ALICE_MATH);
+        Task aboutStudent = new TaskBuilder().withId(TaskBuilder.idOf(1)).withStudent(ALICE).build();
+        Task aboutLesson = new TaskBuilder().withId(TaskBuilder.idOf(2)).withLesson(ALICE, ALICE_MATH).build();
+        addressBook.addTask(aboutStudent);
+        addressBook.addTask(aboutLesson);
+
+        addressBook.setPerson(ALICE, new PersonBuilder(ALICE).withName("Alice Tan").withPhone("91234567").build());
+
+        // The tasks are exactly as they were, and still resolve to the renamed student and their lesson
+        assertEquals(List.of(aboutStudent, aboutLesson), addressBook.getTaskList());
+        Person renamed = addressBook.getPersonList().get(0);
+        Lesson updatedLesson = addressBook.getLessonList().get(0);
+        assertEquals("Alice Tan", renamed.getName().fullName);
+        assertTrue(addressBook.getTaskList().stream().allMatch(task -> task.isAbout(renamed)));
+        assertTrue(aboutLesson.isAbout(updatedLesson));
+    }
+
+    @Test
+    public void setLesson_lessonMoved_taskStaysAttached() {
+        addressBook.addPerson(ALICE);
+        addressBook.addLesson(ALICE_MATH);
+        addressBook.addTask(new TaskBuilder().withLesson(ALICE, ALICE_MATH).build());
+        Lesson moved = ALICE_MATH.reschedule(new seedu.address.model.lesson.LessonDate("2031-05-04"),
+                ALICE_MATH.getTime(), ALICE_MATH.getDuration(), null);
+
+        addressBook.setLesson(ALICE_MATH, moved);
+
+        assertTrue(addressBook.getTaskList().get(0).isAbout(moved));
+        assertEquals(1, addressBook.getTaskList().size());
+    }
+
+    @Test
+    public void setLesson_lessonCancelled_taskStaysAttached() {
+        addressBook.addPerson(ALICE);
+        addressBook.addLesson(ALICE_MATH);
+        addressBook.addTask(new TaskBuilder().withLesson(ALICE, ALICE_MATH).build());
+
+        addressBook.setLesson(ALICE_MATH, ALICE_MATH.cancel("Student unwell"));
+
+        assertTrue(addressBook.getTaskList().get(0).isAbout(ALICE_MATH));
+        assertEquals(1, addressBook.getTaskList().size());
+    }
+
+    @Test
+    public void rebookedSlot_doesNotInheritTaskOfCancelledLesson() {
+        addressBook.addPerson(ALICE);
+        addressBook.addLesson(ALICE_MATH);
+        Task task = new TaskBuilder().withLesson(ALICE, ALICE_MATH).build();
+        addressBook.addTask(task);
+        addressBook.setLesson(ALICE_MATH, ALICE_MATH.cancel("Student unwell"));
+        Lesson rebooked = new LessonBuilder(ALICE_MATH).build(); // same slot, new lesson
+
+        addressBook.addLesson(rebooked);
+
+        assertTrue(task.isAbout(addressBook.getLessonList().get(0)));
+        assertFalse(task.isAbout(rebooked));
+    }
+
+    @Test
+    public void removeLesson_deletesTasksAboutLessonButKeepsStudentTasks() {
+        addressBook.addPerson(ALICE);
+        addressBook.addLesson(ALICE_MATH);
+        Task aboutStudent = new TaskBuilder().withId(TaskBuilder.idOf(1)).withStudent(ALICE).build();
+        addressBook.addTask(aboutStudent);
+        addressBook.addTask(new TaskBuilder().withId(TaskBuilder.idOf(2)).withLesson(ALICE, ALICE_MATH).build());
+
+        addressBook.removeLesson(ALICE_MATH);
+
+        assertEquals(List.of(aboutStudent), addressBook.getTaskList());
+    }
+
+    @Test
+    public void removeHomework_deletesTasksAboutHomeworkButKeepsOthers() {
+        addressBook.addPerson(ALICE);
+        Homework homework = Homework.assign(ALICE.getId(), "Chapter 3", LocalDate.of(2026, 12, 1));
+        addressBook.addHomework(homework);
+        Task aboutStudent = new TaskBuilder().withId(TaskBuilder.idOf(1)).withStudent(ALICE).build();
+        addressBook.addTask(aboutStudent);
+        addressBook.addTask(new TaskBuilder().withId(TaskBuilder.idOf(2)).withHomework(homework).build());
+
+        addressBook.removeHomework(homework);
+
+        assertEquals(List.of(aboutStudent), addressBook.getTaskList());
+    }
+
+    @Test
+    public void addTask_linkToMissingOrForeignRecord_throws() {
+        addressBook.addPerson(ALICE);
+        addressBook.addPerson(BENSON);
+        addressBook.addLesson(ALICE_MATH);
+        Homework homework = Homework.assign(ALICE.getId(), "Chapter 3", LocalDate.of(2026, 12, 1));
+
+        // student not in the data
+        assertThrows(IllegalArgumentException.class, () -> addressBook.addTask(
+                new TaskBuilder().withStudent(new PersonBuilder().withName("Nobody Here").build()).build()));
+        // lesson not in the data
+        assertThrows(IllegalArgumentException.class, () -> addressBook.addTask(
+                new TaskBuilder().withLesson(ALICE, new LessonBuilder(ALICE_MATH).build()).build()));
+        // lesson that belongs to another student
+        assertThrows(IllegalArgumentException.class, () -> addressBook.addTask(
+                new TaskBuilder().withLesson(BENSON, ALICE_MATH).build()));
+        // homework not in the data
+        assertThrows(IllegalArgumentException.class, () -> addressBook.addTask(
+                new TaskBuilder().withHomework(homework).build()));
+        assertTrue(addressBook.getTaskList().isEmpty());
+    }
+
+    @Test
+    public void taskOperations_invalidArguments_throw() {
+        addressBook.addPerson(ALICE);
+        Task task = new TaskBuilder().build();
+        addressBook.addTask(task);
+
+        assertThrows(NullPointerException.class, () -> addressBook.addTask(null));
+        assertThrows(IllegalArgumentException.class, () -> addressBook.addTask(task)); // same id
+        assertThrows(IllegalArgumentException.class, () -> addressBook.setTasks(List.of(task, task)));
+        assertThrows(IllegalArgumentException.class, () -> addressBook.setTask(task,
+                new TaskBuilder().withId(TaskBuilder.idOf(9)).build())); // another id
+        assertThrows(IllegalArgumentException.class, () -> addressBook.setTask(task,
+                new TaskBuilder().withStudent(BENSON).build())); // another link
+        assertThrows(IllegalArgumentException.class, () -> addressBook.setTask(
+                new TaskBuilder().withId(TaskBuilder.idOf(9)).build(),
+                new TaskBuilder().withId(TaskBuilder.idOf(9)).done().build())); // not in the data
+        assertThrows(IllegalArgumentException.class, () -> addressBook.removeTask(
+                new TaskBuilder().withId(TaskBuilder.idOf(9)).build()));
+        assertThrows(UnsupportedOperationException.class, () -> addressBook.getTaskList().clear());
+    }
+
+    @Test
+    public void resetData_copiesTasks_andEqualsConsidersTasks() {
+        AddressBook source = new AddressBook();
+        source.addPerson(ALICE);
+        source.addTask(new TaskBuilder().build());
+
+        addressBook.resetData(source);
+
+        assertEquals(source, addressBook);
+        assertEquals(source.hashCode(), addressBook.hashCode());
+        addressBook.setTask(addressBook.getTaskList().get(0), addressBook.getTaskList().get(0).markDone());
+        assertFalse(source.equals(addressBook));
+    }
 }

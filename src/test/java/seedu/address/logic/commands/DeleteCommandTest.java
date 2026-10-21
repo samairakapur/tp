@@ -21,7 +21,9 @@ import seedu.address.model.ModelManager;
 import seedu.address.model.UserPrefs;
 import seedu.address.model.lesson.Lesson;
 import seedu.address.model.person.Person;
+import seedu.address.model.task.Task;
 import seedu.address.testutil.LessonBuilder;
+import seedu.address.testutil.TaskBuilder;
 
 /**
  * Contains integration tests (interaction with the Model) and unit tests for
@@ -189,5 +191,74 @@ public class DeleteCommandTest {
         model.updateFilteredPersonList(p -> false);
 
         assertTrue(model.getFilteredPersonList().isEmpty());
+    }
+
+    @Test
+    public void execute_studentWithOnlyTasksNotConfirmed_asksForConfirmationCountingTasks() {
+        Person student = model.getFilteredPersonList().get(INDEX_FIRST_PERSON.getZeroBased());
+        model.addTask(new TaskBuilder().withId(TaskBuilder.idOf(1)).withStudent(student).build());
+        model.addTask(new TaskBuilder().withId(TaskBuilder.idOf(2)).withStudent(student).build());
+        Model expectedModel = new ModelManager(model.getAddressBook(), new UserPrefs());
+
+        String expectedMessage = String.format(DeleteCommand.MESSAGE_CONFIRMATION_TASKS_ONLY, student.getName(),
+                student.getPhone(), 2, INDEX_FIRST_PERSON.getOneBased());
+
+        assertCommandSuccess(new DeleteCommand(INDEX_FIRST_PERSON), model, expectedMessage, expectedModel);
+        assertTrue(model.getFilteredPersonList().contains(student));
+        assertEquals(2, model.getAddressBook().getTaskList().size());
+    }
+
+    @Test
+    public void execute_studentWithOnlyTasksConfirmed_deletesStudentAndTasks() {
+        Person student = model.getFilteredPersonList().get(INDEX_FIRST_PERSON.getZeroBased());
+        Person other = model.getFilteredPersonList().get(INDEX_SECOND_PERSON.getZeroBased());
+        model.addTask(new TaskBuilder().withId(TaskBuilder.idOf(1)).withStudent(student).build());
+        Task otherTask = new TaskBuilder().withId(TaskBuilder.idOf(2)).withStudent(other).build();
+        model.addTask(otherTask);
+
+        assertCommandSuccess(new DeleteCommand(INDEX_FIRST_PERSON, true), model,
+                "Deleted student: " + Messages.format(student) + ", along with 1 task(s).",
+                expectedAfterDeleting(student));
+        assertEquals(java.util.List.of(otherTask), model.getAddressBook().getTaskList());
+    }
+
+    @Test
+    public void execute_studentWithLessonsAndTasksNotConfirmed_countsBoth() {
+        Person student = model.getFilteredPersonList().get(INDEX_FIRST_PERSON.getZeroBased());
+        Lesson lesson = new LessonBuilder().withStudent(student).withDate(LocalDate.now().minusDays(3)).build();
+        model.addLesson(lesson);
+        model.addTask(new TaskBuilder().withId(TaskBuilder.idOf(1)).withLesson(student, lesson).build());
+        model.addTask(new TaskBuilder().withId(TaskBuilder.idOf(2)).withStudent(student).build());
+        Model expectedModel = new ModelManager(model.getAddressBook(), new UserPrefs());
+
+        String expectedMessage = String.format(DeleteCommand.MESSAGE_CONFIRMATION, student.getName(),
+                student.getPhone(), 1, "", INDEX_FIRST_PERSON.getOneBased())
+                + String.format(DeleteCommand.MESSAGE_TASKS_ALSO_DELETED, 2);
+
+        assertCommandSuccess(new DeleteCommand(INDEX_FIRST_PERSON), model, expectedMessage, expectedModel);
+        assertEquals(2, model.getAddressBook().getTaskList().size());
+    }
+
+    @Test
+    public void execute_studentWithTasksConfirmed_deletesStudentLessonsAndTasks() {
+        Person student = model.getFilteredPersonList().get(INDEX_FIRST_PERSON.getZeroBased());
+        Person other = model.getFilteredPersonList().get(INDEX_SECOND_PERSON.getZeroBased());
+        Lesson lesson = new LessonBuilder().withStudent(student).withDate(LocalDate.now().plusDays(3)).build();
+        model.addLesson(lesson);
+        model.addTask(new TaskBuilder().withId(TaskBuilder.idOf(1)).withStudent(student).build());
+        model.addTask(new TaskBuilder().withId(TaskBuilder.idOf(3)).withLesson(student, lesson).build());
+        Task otherTask = new TaskBuilder().withId(TaskBuilder.idOf(2)).withStudent(other).build();
+        model.addTask(otherTask);
+
+        assertCommandSuccess(new DeleteCommand(INDEX_FIRST_PERSON, true), model,
+                "Deleted student: " + Messages.format(student) + ", along with 1 lesson(s) and 2 task(s).",
+                expectedAfterDeleting(student));
+        assertEquals(java.util.List.of(otherTask), model.getAddressBook().getTaskList());
+    }
+
+    private Model expectedAfterDeleting(Person student) {
+        Model expectedModel = new ModelManager(model.getAddressBook(), new UserPrefs());
+        expectedModel.deletePerson(student);
+        return expectedModel;
     }
 }

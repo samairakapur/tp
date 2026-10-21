@@ -16,8 +16,8 @@ import seedu.address.model.person.Person;
 
 /**
  * Deletes a student identified using the index shown in the displayed student list.
- * A student who has lessons or homework is only deleted when the command is confirmed, because deleting a student
- * also deletes all of their lessons and this cannot be undone.
+ * A student who has lessons, homework or follow-up tasks is only deleted when the command is confirmed, because
+ * deleting a student also deletes all of their lessons, homework and tasks and this cannot be undone.
  */
 public class DeleteCommand extends Command {
 
@@ -28,7 +28,7 @@ public class DeleteCommand extends Command {
             + ": Deletes the student identified by the index number used in the displayed student list.\n"
             + "Parameters: INDEX (must be a positive integer) [" + CONFIRM_KEYWORD + "]\n"
             + "Example: " + COMMAND_WORD + " 1\n"
-            + "A student who has lessons or homework is only deleted if you add '" + CONFIRM_KEYWORD + "', "
+            + "A student who has lessons, homework or tasks is only deleted if you add '" + CONFIRM_KEYWORD + "', "
             + "e.g. " + COMMAND_WORD + " 1 " + CONFIRM_KEYWORD;
 
     public static final String MESSAGE_DELETE_PERSON_SUCCESS = "Deleted student: %1$s";
@@ -36,6 +36,9 @@ public class DeleteCommand extends Command {
             "Deleted student: %1$s, along with %2$d lesson(s).";
     public static final String MESSAGE_CONFIRMATION = "%1$s (phone: %2$s) has %3$d lesson(s). "
             + "These will all be deleted.\n%4$sType '" + COMMAND_WORD + " %5$d " + CONFIRM_KEYWORD + "' to proceed.";
+    public static final String MESSAGE_TASKS_ALSO_DELETED = "\nThis also deletes %1$d task(s).";
+    public static final String MESSAGE_CONFIRMATION_TASKS_ONLY = "%1$s (phone: %2$s) has %3$d task(s). "
+            + "These will all be deleted.\nType '" + COMMAND_WORD + " %4$d " + CONFIRM_KEYWORD + "' to proceed.";
     public static final String MESSAGE_UPCOMING_WARNING = "Warning: this student has %1$d upcoming lesson(s).\n";
 
     private final Index targetIndex;
@@ -51,7 +54,7 @@ public class DeleteCommand extends Command {
 
     /**
      * Creates a {@code DeleteCommand} that deletes the student at {@code targetIndex}.
-     * A student who has lessons or homework is only deleted if {@code isConfirmed} is true.
+     * A student who has lessons, homework or tasks is only deleted if {@code isConfirmed} is true.
      */
     public DeleteCommand(Index targetIndex, boolean isConfirmed) {
         requireNonNull(targetIndex);
@@ -75,37 +78,67 @@ public class DeleteCommand extends Command {
 
         List<Homework> homeworkToDelete = model.getAddressBook().getHomeworkList().stream()
                 .filter(item -> item.getStudentId().equals(personToDelete.getId())).toList();
+        int taskCount = (int) model.getAddressBook().getTaskList().stream()
+                .filter(task -> task.isAbout(personToDelete)).count();
         if (!homeworkToDelete.isEmpty()) {
-            return deleteWithHomework(model, personToDelete, lessonsToDelete, homeworkToDelete);
+            return deleteWithHomework(model, personToDelete, lessonsToDelete, homeworkToDelete, taskCount);
         }
 
-        if (lessonsToDelete.isEmpty()) {
+        if (lessonsToDelete.isEmpty() && taskCount == 0) {
             model.deletePerson(personToDelete);
             return new CommandResult(String.format(MESSAGE_DELETE_PERSON_SUCCESS, Messages.format(personToDelete)));
         }
 
+        if (lessonsToDelete.isEmpty()) {
+            return deleteWithTasksOnly(model, personToDelete, taskCount);
+        }
+
         if (!isConfirmed) {
-            return new CommandResult(getConfirmationPrompt(personToDelete, lessonsToDelete));
+            return new CommandResult(getConfirmationPrompt(personToDelete, lessonsToDelete)
+                    + tasksSentence(taskCount));
         }
 
         model.deletePerson(personToDelete);
-        return new CommandResult(String.format(MESSAGE_DELETE_PERSON_WITH_LESSONS_SUCCESS,
-                Messages.format(personToDelete), lessonsToDelete.size()));
+        String lessonSummary = String.format(MESSAGE_DELETE_PERSON_WITH_LESSONS_SUCCESS,
+                Messages.format(personToDelete), lessonsToDelete.size());
+        if (taskCount == 0) {
+            return new CommandResult(lessonSummary);
+        }
+        return new CommandResult("Deleted student: " + Messages.format(personToDelete) + ", along with "
+                + lessonsToDelete.size() + " lesson(s) and " + taskCount + " task(s).");
+    }
+
+    /** Returns the line that tells the user how many tasks go with the student, or nothing if there are none. */
+    private static String tasksSentence(int taskCount) {
+        return taskCount == 0 ? "" : String.format(MESSAGE_TASKS_ALSO_DELETED, taskCount);
+    }
+
+    /** Asks for confirmation, then deletes a student whose only linked records are follow-up tasks. */
+    private CommandResult deleteWithTasksOnly(Model model, Person student, int taskCount) {
+        if (!isConfirmed) {
+            return new CommandResult(String.format(MESSAGE_CONFIRMATION_TASKS_ONLY, student.getName(),
+                    student.getPhone(), taskCount, targetIndex.getOneBased()));
+        }
+        model.deletePerson(student);
+        return new CommandResult("Deleted student: " + Messages.format(student) + ", along with " + taskCount
+                + " task(s).");
     }
 
     /** Shows all linked records and upcoming commitments before cascading a student deletion. */
     private CommandResult deleteWithHomework(Model model, Person student, List<Lesson> lessons,
-            List<Homework> homework) {
+            List<Homework> homework, int taskCount) {
         if (!isConfirmed) {
             long upcoming = homework.stream().filter(Homework::isOutstanding)
                     .filter(item -> !item.getDueDate().isBefore(LocalDate.now())).count();
             return new CommandResult(getConfirmationPrompt(student, lessons)
                     + "\nThis also deletes " + homework.size() + " homework item(s), including " + upcoming
-                    + " upcoming homework item(s), and all recorded feedback.");
+                    + " upcoming homework item(s), and all recorded feedback." + tasksSentence(taskCount));
         }
         model.deletePerson(student);
+        String tasks = taskCount == 0 ? "" : " and " + taskCount + " task(s)";
         return new CommandResult("Deleted student: " + Messages.format(student) + ", along with "
-                + lessons.size() + " lesson(s) and " + homework.size() + " homework item(s).");
+                + lessons.size() + " lesson(s)" + (taskCount == 0 ? " and " : ", ") + homework.size()
+                + " homework item(s)" + tasks + ".");
     }
 
     /**

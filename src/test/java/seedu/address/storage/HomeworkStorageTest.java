@@ -44,14 +44,15 @@ public class HomeworkStorageTest {
 
     @Test
     public void load_knownVersionsWithoutHomework_defaultEmptyAndRejectFuture() throws Exception {
-        for (String version : new String[] {"", "\"schemaVersion\":14,", "\"schemaVersion\":15,"}) {
+        for (String version : new String[] {"", "\"schemaVersion\":14,", "\"schemaVersion\":15,",
+            "\"schemaVersion\":16,"}) {
             AddressBook book = JsonUtil.fromJsonString("{" + version + "\"persons\":[]}",
                     JsonSerializableAddressBook.class).toModelType();
             assertTrue(book.getHomeworkList().isEmpty());
         }
         assertThrows(IllegalValueException.class, () -> JsonUtil.fromJsonString(
-                "{\"schemaVersion\":16,\"persons\":[]}", JsonSerializableAddressBook.class).toModelType());
-        assertEquals(15, StorageSchema.CURRENT_VERSION);
+                "{\"schemaVersion\":17,\"persons\":[]}", JsonSerializableAddressBook.class).toModelType());
+        assertEquals(16, StorageSchema.CURRENT_VERSION);
     }
 
     @Test
